@@ -1,5 +1,5 @@
 [project]
-name = "whisperer"
+name = "speakboard"
 version = "0.1.0"
 description = "Local voice input with Whisper — Typeless alternative"
 readme = "README.md"
@@ -7,8 +7,13 @@ requires-python = ">=3.13"
 dependencies = [
     "mlx-whisper>=0.4.0",
     "numpy>=2.4.3",
-    "pyobjc-framework-Cocoa>=11.0",
-    "pynput>=1.8.1",
+"pynput>=1.8.1",
     "pyperclip>=1.11.0",
     "sounddevice>=0.5.5",
 ]
+
+[project.scripts]
+speakboard = "speakboard.__main__:main"
+
+[tool.uv]
+package = true
