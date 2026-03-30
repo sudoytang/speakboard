@@ -44,7 +44,7 @@ A new module exposing an HTTP service via FastAPI:
 `server.py` has no knowledge of hotkeys, audio devices, or clipboard.
 Transcription is injected via the `Transcriber` interface.
 
-### `__main__.py` — Subcommand dispatch and platform-based backend selection
+### `__main__.py` — Subcommand dispatch, platform-based backend selection, and `--backend` flag
 
 Replaced the single `main()` with an `argparse`-based dispatcher:
 
@@ -58,6 +58,14 @@ Backend selection is centralised here and nowhere else:
 
 - `darwin` → `MLXWhisperTranscriber` (Apple Silicon, mlx-whisper)
 - other → `CPUWhisperTranscriber` (Linux/Windows, openai-whisper)
+
+A `--backend {mlx,cpu}` flag was added to both subcommands to override the
+platform default, useful for testing the CPU backend on macOS:
+
+```
+python -m speakboard run --backend cpu
+python -m speakboard serve --backend cpu
+```
 
 `run` raises `NotImplementedError` on non-macOS since the right Option key
 hotkey is macOS-specific. `serve` works on any platform.
@@ -73,18 +81,52 @@ only what it needs:
 | `cpu` | openai-whisper |
 | `server` | fastapi, uvicorn, soundfile, scipy |
 | `cli` | pynput, pyperclip, sounddevice |
-| `macos` | mlx + cli (convenience) |
-| `linux` | cpu + server (convenience) |
+| `mlx-cli` | mlx + cli — macOS standalone |
+| `mlx-server` | mlx + server — macOS HTTP sidecar |
+| `cpu-cli` | cpu + cli — any platform standalone |
+| `cpu-server` | cpu + server — Linux/Windows HTTP server |
 | `all` | everything |
 
 Install examples:
 ```bash
-pip install "speakboard[macos]"   # macOS standalone
-pip install "speakboard[linux]"   # Linux server
-pip install "speakboard[all]"     # everything
+uv sync --extra mlx-cli       # macOS standalone
+uv sync --extra mlx-server    # macOS HTTP sidecar
+uv sync --extra cpu-server    # Linux server
+uv sync --extra all           # everything
+```
+
+A `test` optional group was also added for running the test suite:
+
+```bash
+uv run --extra mlx-server --extra test pytest tests/ -v
 ```
 
 Version bumped from `0.1.0` → `0.2.0`.
+
+---
+
+### `server.py` — Inference lock
+
+Added an `asyncio.Lock` around the transcription call to prevent concurrent
+requests from racing on the shared model instance. Whisper models are not
+thread-safe due to internal KV cache and GPU command queue state. With the
+lock, a second request waits for the first to complete before starting
+inference. For single-user sidecar use this has no practical latency impact.
+
+### `tests/` — Pytest test suite
+
+Added an integration test suite covering the HTTP server:
+
+- `test_health` — verifies `/health` returns 200
+- `test_empty_body_returns_400` — verifies empty request is rejected
+- `test_invalid_audio_returns_422` — verifies non-audio bytes are rejected
+- `test_transcription_wer[0–4]` — streams 5 samples from the
+  `hf-internal-testing/librispeech_asr_demo` dataset, POSTs each to
+  `/transcribe`, and asserts WER < 15%
+
+The `datasets` library audio column is loaded with `decode=False` to avoid the
+`torchcodec` dependency introduced in `datasets` 3.x; audio is decoded manually
+with `soundfile` instead.
 
 ---
 
