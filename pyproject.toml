@@ -1,15 +1,46 @@
 [project]
 name = "speakboard"
-version = "0.1.0"
+version = "0.2.0"
 description = "Local voice input with Whisper — Typeless alternative"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-    "mlx-whisper>=0.4.0",
     "numpy>=2.4.3",
-"pynput>=1.8.1",
+]
+
+[project.optional-dependencies]
+mlx = [
+    "mlx-whisper>=0.4.0",
+]
+cpu = [
+    "openai-whisper>=20240930",
+]
+server = [
+    "fastapi>=0.115.0",
+    "uvicorn>=0.34.0",
+    "soundfile>=0.13.0",
+    "scipy>=1.15.0",
+]
+cli = [
+    "pynput>=1.8.1",
     "pyperclip>=1.11.0",
     "sounddevice>=0.5.5",
+]
+# Convenience groups
+mlx-cli = [
+    "speakboard[mlx,cli]",
+]
+mlx-server = [
+    "speakboard[mlx,server]",
+]
+cpu-cli = [
+    "speakboard[cpu,cli]",
+]
+cpu-server = [
+    "speakboard[cpu,server]",
+]
+all = [
+    "speakboard[mlx,cpu,server,cli]",
 ]
 
 [project.scripts]
