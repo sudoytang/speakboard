@@ -24,11 +24,13 @@ def _decode_audio(data: bytes) -> np.ndarray:
 
 
 def create_app(transcriber: Transcriber):
+    import asyncio
     from fastapi import FastAPI, Request, HTTPException
     from fastapi.responses import JSONResponse
 
     global _transcriber
     _transcriber = transcriber
+    _inference_lock = asyncio.Lock()
 
     app = FastAPI(title="speakboard", description="Audio transcription service")
 
@@ -38,7 +40,6 @@ def create_app(transcriber: Transcriber):
 
     @app.post("/transcribe")
     async def transcribe(request: Request):
-        import asyncio
         data = await request.body()
         if not data:
             raise HTTPException(status_code=400, detail="Empty audio body")
@@ -50,7 +51,8 @@ def create_app(transcriber: Transcriber):
 
         t0 = time.perf_counter()
         loop = asyncio.get_event_loop()
-        text, language = await loop.run_in_executor(None, _transcriber.transcribe, audio)
+        async with _inference_lock:
+            text, language = await loop.run_in_executor(None, _transcriber.transcribe, audio)
         elapsed = time.perf_counter() - t0
         print(f"[speakboard] [{language}] transcription took {elapsed:.2f}s: {text}")
 
