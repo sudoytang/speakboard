@@ -6,7 +6,7 @@ import pyperclip
 import sounddevice as sd
 from pynput import keyboard
 
-from .transcribe import SAMPLE_RATE, Transcriber
+from .transcribe import SAMPLE_RATE, MAX_AUDIO_SECONDS, Transcriber
 
 HOTKEY = keyboard.Key.alt_r
 SILENCE_RMS_THRESHOLD = 0.002
@@ -37,13 +37,15 @@ class Whisperer:
             print("[speakboard] Recording...")
 
     def _on_release(self, key: keyboard.Key | keyboard.KeyCode | None) -> None:
-        if key == HOTKEY and self._recording:
+        if key == HOTKEY:
+            was_recording = self._recording
             self._recording = False
             if self._stream is not None:
                 self._stream.stop()
                 self._stream.close()
                 self._stream = None
-            threading.Thread(target=self._transcribe_and_copy, daemon=True).start()
+            if was_recording:
+                threading.Thread(target=self._transcribe_and_copy, daemon=True).start()
 
     def _audio_callback(self, indata: np.ndarray, frames: int, t, status) -> None:
         if self._recording:
@@ -63,13 +65,24 @@ class Whisperer:
             return
 
         t0 = time.perf_counter()
-        text, language = self._transcriber.transcribe(audio)
+        result = self._transcriber.transcribe(audio)
         print(f"[speakboard] Transcription took {time.perf_counter() - t0:.2f}s")
 
-        if not text:
+        if result.split:
+            print(f"[speakboard] Split into {len(result.segments)} segments.")
+
+        if not result.text and not any(s.hallucinated for s in result.segments):
             print("[speakboard] No speech detected.")
             return
 
-        print(f"[speakboard] [{language}] {text}")
-        pyperclip.copy(text)
-        print("[speakboard] Copied to clipboard.")
+        if result.split:
+            parts = [
+                "[hallucinated]" if s.hallucinated else f"[{s.language}] {s.text}"
+                for s in result.segments
+            ]
+            print(f"[speakboard] {'<>'.join(parts)}")
+        else:
+            print(f"[speakboard] [{result.language}] {result.text}")
+        if result.text:
+            pyperclip.copy(result.text)
+            print("[speakboard] Copied to clipboard.")

@@ -44,6 +44,8 @@ def create_app(transcriber: Transcriber):
         if not data:
             raise HTTPException(status_code=400, detail="Empty audio body")
 
+        assert _transcriber is not None
+
         try:
             audio = _decode_audio(data)
         except Exception as e:
@@ -52,11 +54,26 @@ def create_app(transcriber: Transcriber):
         t0 = time.perf_counter()
         loop = asyncio.get_event_loop()
         async with _inference_lock:
-            text, language = await loop.run_in_executor(None, _transcriber.transcribe, audio)
+            result = await loop.run_in_executor(None, _transcriber.transcribe, audio)
         elapsed = time.perf_counter() - t0
-        print(f"[speakboard] [{language}] transcription took {elapsed:.2f}s: {text}")
+        print(f"[speakboard] [{result.language}] transcription took {elapsed:.2f}s: {result.text}")
 
-        return JSONResponse({"text": text, "language": language})
+        return JSONResponse({
+            "text": result.text,
+            "language": result.language,
+            "duration_seconds": result.duration_seconds,
+            "split": result.split,
+            "segments": [
+                {
+                    "index": s.index,
+                    "duration_seconds": s.duration_seconds,
+                    "text": s.text,
+                    "language": s.language,
+                    "hallucinated": s.hallucinated,
+                }
+                for s in result.segments
+            ],
+        })
 
     return app
 
