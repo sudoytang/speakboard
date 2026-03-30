@@ -65,7 +65,11 @@ class Whisperer:
             return
 
         t0 = time.perf_counter()
-        result = self._transcriber.transcribe(audio)
+        try:
+            result = self._transcriber.transcribe(audio)
+        except RuntimeError as e:
+            print(f"[speakboard] Transcription failed: {e}")
+            return
         print(f"[speakboard] Transcription took {time.perf_counter() - t0:.2f}s")
 
         if result.split:

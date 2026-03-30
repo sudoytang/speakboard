@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 import gzip
+import queue as _queue
 
 import numpy as np
 
@@ -209,3 +210,91 @@ class CPUWhisperTranscriber(Transcriber):
 
     def transcribe(self, audio: np.ndarray) -> TranscribeResult:
         return _transcribe_with_splitting(audio, self._transcribe_chunk)
+
+
+# ---------------------------------------------------------------------------
+# Subprocess worker (must be top-level for multiprocessing spawn pickling)
+# ---------------------------------------------------------------------------
+
+def _worker_process(factory, req_q, res_q) -> None:
+    """Runs in a subprocess. Loads the model once, then serves transcription requests."""
+    transcriber = factory()
+    transcriber.load()
+    res_q.put(("ready", None))
+    while True:
+        audio = req_q.get()
+        if audio is None:
+            break
+        try:
+            result = transcriber.transcribe(audio)
+            res_q.put(("ok", result))
+        except Exception as e:
+            res_q.put(("error", str(e)))
+
+
+class WatchdogTranscriber(Transcriber):
+    """Wraps any Transcriber in a subprocess with a watchdog timer.
+
+    Timeout per request = max(min_timeout_seconds, audio_duration * timeout_multiplier).
+    If inference exceeds the timeout, the subprocess is killed and restarted.
+    Thread-safe: internal lock ensures only one inference runs at a time.
+
+    Suggested defaults:
+      MLX backend:  min_timeout_seconds=5,  timeout_multiplier=1
+      CPU backend:  min_timeout_seconds=10, timeout_multiplier=5
+    """
+
+    def __init__(
+        self,
+        factory,
+        min_timeout_seconds: float = 5.0,
+        timeout_multiplier: float = 1.0,
+    ):
+        self._factory = factory
+        self._min_timeout = min_timeout_seconds
+        self._multiplier = timeout_multiplier
+        self._proc = None
+        self._req_q = None
+        self._res_q = None
+        import threading
+        self._lock = threading.Lock()
+
+    def load(self) -> None:
+        self._start_worker()
+
+    def _start_worker(self) -> None:
+        import multiprocessing as mp
+        ctx = mp.get_context("spawn")
+        self._req_q = ctx.Queue()
+        self._res_q = ctx.Queue()
+        self._proc = ctx.Process(
+            target=_worker_process,
+            args=(self._factory, self._req_q, self._res_q),
+            daemon=True,
+        )
+        self._proc.start()
+        kind, _ = self._res_q.get()  # block until model is loaded and verified
+        assert kind == "ready"
+
+    def _kill_and_restart(self) -> None:
+        print("[speakboard] Watchdog: killing hung inference process, restarting...")
+        if self._proc is not None:
+            self._proc.kill()
+            self._proc.join()
+        self._start_worker()
+
+    def transcribe(self, audio: np.ndarray) -> TranscribeResult:
+        audio_duration = len(audio) / SAMPLE_RATE
+        timeout = max(self._min_timeout, audio_duration * self._multiplier)
+        with self._lock:
+            self._req_q.put(audio)
+            try:
+                kind, value = self._res_q.get(timeout=timeout)
+            except _queue.Empty:
+                self._kill_and_restart()
+                raise RuntimeError(
+                    f"Inference timed out after {timeout:.1f}s (audio: {audio_duration:.1f}s)"
+                )
+        if kind == "error":
+            raise RuntimeError(f"Inference subprocess error: {value}")
+        return value

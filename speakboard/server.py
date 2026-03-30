@@ -32,11 +32,24 @@ def create_app(transcriber: Transcriber):
     _transcriber = transcriber
     _inference_lock = asyncio.Lock()
 
+    # "available" — idle, ready to accept requests
+    # "busy"      — inference in progress, new requests will queue behind the lock
+    # "broken"    — last inference timed out; subprocess is restarting
+    #               recovers to "available" once restart completes (before 503 is sent)
+    _state = {"status": "available", "queue_depth": 0}
+
     app = FastAPI(title="speakboard", description="Audio transcription service")
 
     @app.get("/health")
     async def health():
         return {"status": "ok"}
+
+    @app.get("/status")
+    async def status():
+        return {
+            "status": _state["status"],
+            "queue_depth": _state["queue_depth"],
+        }
 
     @app.post("/transcribe")
     async def transcribe(request: Request):
@@ -51,10 +64,26 @@ def create_app(transcriber: Transcriber):
         except Exception as e:
             raise HTTPException(status_code=422, detail=f"Could not decode audio: {e}")
 
+        _state["queue_depth"] += 1
         t0 = time.perf_counter()
         loop = asyncio.get_event_loop()
-        async with _inference_lock:
-            result = await loop.run_in_executor(None, _transcriber.transcribe, audio)
+        try:
+            async with _inference_lock:
+                _state["queue_depth"] -= 1
+                _state["status"] = "busy"
+                try:
+                    result = await loop.run_in_executor(None, _transcriber.transcribe, audio)
+                except RuntimeError as e:
+                    _state["status"] = "broken"
+                    _state["status"] = "available"  # restart already completed inside transcribe()
+                    raise HTTPException(status_code=503, detail=str(e))
+                _state["status"] = "available"
+        except HTTPException:
+            raise
+        except Exception as e:
+            _state["status"] = "available"
+            raise HTTPException(status_code=500, detail=str(e))
+
         elapsed = time.perf_counter() - t0
         print(f"[speakboard] [{result.language}] transcription took {elapsed:.2f}s: {result.text}")
 
