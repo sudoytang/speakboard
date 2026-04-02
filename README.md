@@ -1,4 +1,9 @@
-# Speakboard
+# Speakboard (Archived)
+
+> **This project is archived.** It has been superseded by a faster, lower-memory, and more capable rewrite:
+>
+> - **[speakboard-sw](https://github.com/sudoytang/speakboard-sw)** — Swift menu-bar frontend with real-time streaming transcription and a configurable hotkey
+> - **[speakboard-be-sherpa](https://github.com/sudoytang/speakboard-be-sherpa)** — Rust WebSocket ASR backend powered by SenseVoice (~100 MB, vs ~1.6 GB here)
 
 Hold a key, speak, release — text lands in your clipboard.
 
